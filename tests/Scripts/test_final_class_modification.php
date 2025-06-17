@@ -16,15 +16,24 @@ try {
 
     // Initialize Z-Engine
     Core::init();
+    echo "✓ Z-Engine initialized successfully\n";
 
     // Check original class state
     $originalReflection = new \ReflectionClass(FinalClass::class);
+    echo "Original FinalClass state: " . ($originalReflection->isFinal() ? "Final" : "Not Final") . "\n";
 
     // Use Z-Engine to make the final class non-final
     $zEngineReflection = new ReflectionClass(FinalClass::class);
+    echo "Z-Engine FinalClass state before modification: " . ($zEngineReflection->isFinal() ? "Final" : "Not Final") . "\n";
 
     // Make it non-final
     $zEngineReflection->setFinal(false);
+    echo "Z-Engine FinalClass state after setFinal(false): " . ($zEngineReflection->isFinal() ? "Final" : "Not Final") . "\n";
+
+    // Create an instance of the final class
+    $instance = new FinalClass("Test message from final class");
+    echo "✓ Successfully created instance of FinalClass\n";
+    echo "Message: " . $instance->getMessage() . "\n";
 
     // Try to create an extended class (this would normally fail with a final class)
     // Note: In our minimal implementation, this will still work because we don't

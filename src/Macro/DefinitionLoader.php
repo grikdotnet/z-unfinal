@@ -30,6 +30,7 @@ class DefinitionLoader extends PhpStreamFilter
     /**
      * {@inheritdoc}
      */
+    #[\ReturnTypeWillChange]
     public function filter($in, $out, &$consumed, $closing)
     {
         /** Simple pattern to match if(n?)def..endif constructions */

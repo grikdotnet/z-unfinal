@@ -121,6 +121,7 @@ class ReflectionClass extends NativeReflectionClass
     /**
      * @inheritDoc
      */
+    #[\ReturnTypeWillChange]
     public function getName()
     {
         return StringEntry::fromCData($this->pointer->name)->getStringValue();
@@ -264,6 +265,7 @@ class ReflectionClass extends NativeReflectionClass
     /**
      * @inheritDoc
      */
+    #[\ReturnTypeWillChange]
     public function getMethod($name)
     {
         $functionEntry = $this->methodTable->find(strtolower($name));
@@ -278,6 +280,7 @@ class ReflectionClass extends NativeReflectionClass
      * @inheritDoc
      * @return ReflectionMethod[]
      */
+    #[\ReturnTypeWillChange]
     public function getMethods($filter = null)
     {
         $methods = [];
@@ -321,11 +324,13 @@ class ReflectionClass extends NativeReflectionClass
         return $refMethod;
     }
 
+    #[\ReturnTypeWillChange]
     public function isInternal()
     {
         return ord($this->pointer->type) === Core::ZEND_INTERNAL_CLASS;
     }
 
+    #[\ReturnTypeWillChange]
     public function isUserDefined()
     {
         return ord($this->pointer->type) === Core::ZEND_USER_CLASS;
@@ -456,6 +461,7 @@ class ReflectionClass extends NativeReflectionClass
     /**
      * @inheritDoc
      */
+    #[\ReturnTypeWillChange]
     public function getParentClass(): ?ReflectionClass
     {
         if (!$this->hasParentClass()) {
@@ -603,6 +609,7 @@ class ReflectionClass extends NativeReflectionClass
      *
      * @return iterable|ReflectionValue[]
      */
+    #[\ReturnTypeWillChange]
     public function getDefaultProperties(): iterable
     {
         $iterator = function () {
@@ -640,6 +647,7 @@ class ReflectionClass extends NativeReflectionClass
      * @inheritDoc
      * @return ReflectionClassConstant
      */
+    #[\ReturnTypeWillChange]
     public function getReflectionConstant($name)
     {
         $constantEntry = $this->constantsTable->find($name);
