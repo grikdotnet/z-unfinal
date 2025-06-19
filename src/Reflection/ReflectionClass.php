@@ -89,7 +89,10 @@ class ReflectionClass extends NativeReflectionClass
         $reflectionClass->initLowLevelStructures($classEntry);
         $classNameValue = StringEntry::fromCData($classEntry->name);
         try {
-            call_user_func([$reflectionClass, 'parent::__construct'], $classNameValue->getStringValue());
+            // Use reflection to call the parent constructor
+            $parentClass = get_parent_class($reflectionClass);
+            $constructor = new \ReflectionMethod($parentClass, '__construct');
+            $constructor->invoke($reflectionClass, $classNameValue->getStringValue());
         } catch (\ReflectionException $e) {
             // This can happen during the class-loading. But we still can work with it.
         }
@@ -289,8 +292,13 @@ class ReflectionClass extends NativeReflectionClass
             throw new \ReflectionException("Trait {$traitName} does not exist");
         }
         
+        // Create a temporary class that uses the trait
+        $tempClassName = 'ZEngine_Temp_' . md5($traitName . microtime(true));
+        eval("class {$tempClassName} { use {$traitName}; }");
+        
         // Get the trait reflection
         $traitReflection = new \ReflectionClass($traitName);
+        $tempReflection = new \ReflectionClass($tempClassName);
         
         // Create a simple implementation for each trait method
         foreach ($traitReflection->getMethods() as $traitMethod) {
@@ -301,14 +309,16 @@ class ReflectionClass extends NativeReflectionClass
             
             $methodName = $traitMethod->getName();
             
+            // Get the method from the temporary class
+            $tempMethod = $tempReflection->getMethod($methodName);
+            
             // Create a method implementation that matches the trait method
-            $methodCode = function() use ($methodName) {
-                // Get all arguments passed to this method
-                $args = func_get_args();
+            $methodCode = function() use ($tempMethod, $tempClassName) {
+                // Create an instance of the temporary class
+                $tempInstance = new $tempClassName();
                 
-                // For the test case, we just need to make sure the method exists
-                // In a real implementation, we would need to properly implement the trait method logic
-                return $args[0] ?? null;
+                // Call the method on the temporary instance with the same arguments
+                return $tempMethod->invokeArgs($tempInstance, func_get_args());
             };
             
             // Add the method to our target class

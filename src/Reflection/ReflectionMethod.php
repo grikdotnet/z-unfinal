@@ -62,8 +62,12 @@ class ReflectionMethod extends NativeReflectionMethod
 
         $scopeName    = StringEntry::fromCData($scopeNamePtr);
         $functionName = StringEntry::fromCData($functionNamePtr);
-        call_user_func(
-            [$reflectionMethod, 'parent::__construct'],
+        
+        // Use reflection to call the parent constructor
+        $parentClass = get_parent_class($reflectionMethod);
+        $constructor = new \ReflectionMethod($parentClass, '__construct');
+        $constructor->invoke(
+            $reflectionMethod,
             $scopeName->getStringValue(),
             $functionName->getStringValue()
         );
