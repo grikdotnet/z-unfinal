@@ -1,6 +1,6 @@
 {
     "name": "grikdotnet/z-unfinal",
-    "description": "Library that allows converting final classes to non-final, abstract to non-abstract, and adding traits",
+    "description": "Library allows converting final classes to non-final, abstract to non-abstract, and adding traits",
     "type": "library",
     "require": {
         "php": ">=8.0",
@@ -13,6 +13,10 @@
         {
             "name": "Alexander Lisachenko",
             "email": "lisachenko.it@gmail.com"
+        },
+        {
+            "name": "Grigori Kocanov",
+            "email": "public@grik.net"
         }
     ],
     "autoload": {

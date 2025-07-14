@@ -2,11 +2,10 @@
 
 **This is a partial fork of the [z-engine](https://github.com/lisachenko/z-engine) library, compatibile with PHP 8.4.**
 
-> This library is intended for unit testing and dynamic runtime manipulation of PHP classes.
-
 This package allows you to:
 
-- Remove `final` and `abstract` flags from classes
+- Extend final classes
+- Create instances of abstract classes
 - Add traits to existing classes dynamically
 
 ## Intended Use Cases
@@ -15,7 +14,8 @@ This package allows you to:
   - Mock or extend classes declared as `final` or `abstract` in your tests.
   - Enable mocking frameworks to work with classes that would otherwise be unmockable.
 - **Dynamic Trait Injection:**
-  - Add traits to classes at runtime to implement behaviors such as "friendly" classes that can access each other's protected methods.
+  - Augment class functionality for testing 
+  - Implement behaviors such as "friendly" classes that access each other's protected methods.
 
 ## Installation
 
