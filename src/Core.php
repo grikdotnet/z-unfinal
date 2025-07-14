@@ -247,7 +247,7 @@ class Core
             $definition = file_get_contents(DefinitionLoader::wrap(__DIR__.'/../include/engine_x64_nts.h'));
             $arguments  = [$definition];
 
-            // For Windows platform we should load symbols from the shared php7.dll library
+            // For Windows platform we should load symbols from the shared php{major_version}.dll library
             if ($isWindowsPlatform) {
                 $arguments[] = 'php' . PHP_MAJOR_VERSION . '.dll';
             }

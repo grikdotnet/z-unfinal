@@ -15,27 +15,6 @@ namespace ZEngine\Reflection;
 use Closure;
 use FFI\CData;
 use ReflectionClass as NativeReflectionClass;
-use ZEngine\ClassExtension\Hook\CastObjectHook;
-use ZEngine\ClassExtension\Hook\CompareValuesHook;
-use ZEngine\ClassExtension\Hook\CreateObjectHook;
-use ZEngine\ClassExtension\Hook\DoOperationHook;
-use ZEngine\ClassExtension\Hook\GetPropertiesForHook;
-use ZEngine\ClassExtension\Hook\GetPropertyPointerHook;
-use ZEngine\ClassExtension\Hook\HasPropertyHook;
-use ZEngine\ClassExtension\Hook\InterfaceGetsImplementedHook;
-use ZEngine\ClassExtension\Hook\ReadPropertyHook;
-use ZEngine\ClassExtension\Hook\UnsetPropertyHook;
-use ZEngine\ClassExtension\Hook\WritePropertyHook;
-use ZEngine\ClassExtension\ObjectCastInterface;
-use ZEngine\ClassExtension\ObjectCompareValuesInterface;
-use ZEngine\ClassExtension\ObjectCreateInterface;
-use ZEngine\ClassExtension\ObjectDoOperationInterface;
-use ZEngine\ClassExtension\ObjectGetPropertiesForInterface;
-use ZEngine\ClassExtension\ObjectGetPropertyPointerInterface;
-use ZEngine\ClassExtension\ObjectHasPropertyInterface;
-use ZEngine\ClassExtension\ObjectReadPropertyInterface;
-use ZEngine\ClassExtension\ObjectUnsetPropertyInterface;
-use ZEngine\ClassExtension\ObjectWritePropertyInterface;
 use ZEngine\Core;
 use ZEngine\Type\ClosureEntry;
 use ZEngine\Type\HashTable;
@@ -110,7 +89,10 @@ class ReflectionClass extends NativeReflectionClass
         $reflectionClass->initLowLevelStructures($classEntry);
         $classNameValue = StringEntry::fromCData($classEntry->name);
         try {
-            call_user_func([$reflectionClass, 'parent::__construct'], $classNameValue->getStringValue());
+            // Use reflection to call the parent constructor
+            $parentClass = get_parent_class($reflectionClass);
+            $constructor = new \ReflectionMethod($parentClass, '__construct');
+            $constructor->invoke($reflectionClass, $classNameValue->getStringValue());
         } catch (\ReflectionException $e) {
             // This can happen during the class-loading. But we still can work with it.
         }
@@ -121,6 +103,7 @@ class ReflectionClass extends NativeReflectionClass
     /**
      * @inheritDoc
      */
+    #[\ReturnTypeWillChange]
     public function getName()
     {
         return StringEntry::fromCData($this->pointer->name)->getStringValue();
@@ -163,107 +146,9 @@ class ReflectionClass extends NativeReflectionClass
     }
 
     /**
-     * Adds interfaces to the current class
-     *
-     * @param string ...$interfaceNames Name of interfaces to add
-     *
-     * @see zend_inheritance.c:zend_do_implement_interface() function implementation for details
-     * @internal
-     */
-    public function addInterfaces(string ...$interfaceNames): void
-    {
-        $availableInterfaces = $this->getInterfaceNames();
-        $interfacesToAdd     = array_values(array_diff($interfaceNames, $availableInterfaces));
-        $numInterfacesToAdd  = count($interfacesToAdd);
-        $totalInterfaces     = count($availableInterfaces);
-        $numResultInterfaces = $totalInterfaces + $numInterfacesToAdd;
-
-        // Memory should be non-owned to keep it live more that $memory variable in this method.
-        // If this class is internal then we should use persistent memory
-        // If this class is user-defined and we are not in CLI, then use persistent memory, otherwise non-persistent
-        $isPersistent = $this->isInternal() || PHP_SAPI !== 'cli';
-        $memory       = Core::new("zend_class_entry *[$numResultInterfaces]", false, $isPersistent);
-
-        $itemsSize = Core::sizeof(Core::type('zend_class_entry *'));
-        if ($totalInterfaces > 0) {
-            Core::memcpy($memory, $this->pointer->interfaces, $itemsSize * $totalInterfaces);
-        }
-        for ($position = $totalInterfaces, $index = 0; $index < $numInterfacesToAdd; $position++, $index++) {
-            $interfaceName = $interfacesToAdd[$index];
-            if (!interface_exists($interfaceName)) {
-                throw new \ReflectionException("Interface {$interfaceName} was not found");
-            }
-            $classValueEntry   = Core::$executor->classTable->find(strtolower($interfaceName));
-            $interfaceClass    = $classValueEntry->getRawClass();
-            $memory[$position] = $interfaceClass;
-        }
-
-        // As we don't have realloc methods in PHP, we can free non-persistent memory to prevent leaks
-        if ($totalInterfaces > 0 && !$isPersistent) {
-            Core::free($this->pointer->interfaces);
-        }
-        $this->pointer->interfaces = Core::cast('zend_class_entry **', Core::addr($memory));
-
-        // We should also add ZEND_ACC_RESOLVED_INTERFACES explicitly with first interface
-        if ($totalInterfaces === 0 && $numInterfacesToAdd > 0) {
-            $this->pointer->ce_flags |= Core::ZEND_ACC_RESOLVED_INTERFACES;
-        }
-        $this->pointer->num_interfaces = $numResultInterfaces;
-    }
-
-    /**
-     * Removes interfaces from the current class
-     *
-     * @param string ...$interfaceNames Name of interfaces to remove
-     * @internal
-     */
-    public function removeInterfaces(string ...$interfaceNames): void
-    {
-        $availableInterfaces = $this->getInterfaceNames();
-        $indexesToRemove     = [];
-        foreach ($interfaceNames as $interfaceToRemove) {
-            $interfacePosition = array_search($interfaceToRemove, $availableInterfaces, true);
-            if ($interfacePosition === false) {
-                throw new \ReflectionException("Interface {$interfaceToRemove} doesn't belong to the class");
-            }
-            $indexesToRemove[$interfacePosition] = true;
-        }
-        $totalInterfaces     = count($availableInterfaces);
-        $numResultInterfaces = $totalInterfaces - count($indexesToRemove);
-
-        // Memory should be non-owned to keep it live more that $memory variable in this method.
-        // If this class is internal then we should use persistent memory
-        // If this class is user-defined and we are not in CLI, then use persistent memory, otherwise non-persistent
-        $isPersistent = $this->isInternal() || PHP_SAPI !== 'cli';
-
-        // If we remove all interfaces then just clear $this->pointer->interfaces field
-        if ($numResultInterfaces === 0) {
-            if ($totalInterfaces > 0 && !$isPersistent) {
-                Core::free($this->pointer->interfaces);
-            }
-            // We should also clean ZEND_ACC_RESOLVED_INTERFACES
-            $this->pointer->interfaces = null;
-            $this->pointer->ce_flags &= (~ Core::ZEND_ACC_RESOLVED_INTERFACES);
-        } else {
-            // Allocate non-owned memory, either persistent (for internal classes) or not (for user-defined)
-            $memory = Core::new("zend_class_entry *[$numResultInterfaces]", false, $isPersistent);
-            for ($index = 0, $destIndex = 0; $index < $this->pointer->num_interfaces; $index++) {
-                if (!isset($indexesToRemove[$index])) {
-                    $memory[$destIndex++] = $this->pointer->interfaces[$index];
-                }
-            }
-            if ($totalInterfaces > 0 && !$isPersistent) {
-                Core::free($this->pointer->interfaces);
-            }
-            $this->pointer->interfaces = Core::cast('zend_class_entry **', Core::addr($memory));
-        }
-        // Decrease the total number of interfaces in the class entry
-        $this->pointer->num_interfaces = $numResultInterfaces;
-    }
-
-    /**
      * @inheritDoc
      */
+    #[\ReturnTypeWillChange]
     public function getMethod($name)
     {
         $functionEntry = $this->methodTable->find(strtolower($name));
@@ -278,6 +163,7 @@ class ReflectionClass extends NativeReflectionClass
      * @inheritDoc
      * @return ReflectionMethod[]
      */
+    #[\ReturnTypeWillChange]
     public function getMethods($filter = null)
     {
         $methods = [];
@@ -321,27 +207,16 @@ class ReflectionClass extends NativeReflectionClass
         return $refMethod;
     }
 
+    #[\ReturnTypeWillChange]
     public function isInternal()
     {
         return ord($this->pointer->type) === Core::ZEND_INTERNAL_CLASS;
     }
 
+    #[\ReturnTypeWillChange]
     public function isUserDefined()
     {
         return ord($this->pointer->type) === Core::ZEND_USER_CLASS;
-    }
-
-    /**
-     * Removes given methods from the class
-     *
-     * @param string ...$methodNames Name of methods to remove
-     * @internal
-     */
-    public function removeMethods(string ...$methodNames): void
-    {
-        foreach ($methodNames as $methodName) {
-            $this->methodTable->delete(strtolower($methodName));
-        }
     }
 
     /**
@@ -392,6 +267,9 @@ class ReflectionClass extends NativeReflectionClass
 
             $memory[$position]->name    = $name->getRawValue();
             $memory[$position]->lc_name = $lcName->getRawValue();
+            
+            // Add the trait methods to the class
+            $this->importTraitMethods($traitName);
         }
         // As we don't have realloc methods in PHP, we can free non-persistent memory to prevent leaks
         if ($totalTraits > 0 && !$isPersistent) {
@@ -401,61 +279,57 @@ class ReflectionClass extends NativeReflectionClass
         $this->pointer->trait_names = Core::cast('zend_class_name *', Core::addr($memory));
         $this->pointer->num_traits  = $numResultTraits;
     }
-
+    
     /**
-     * Removes traits from the current class
+     * Imports methods from a trait into the current class
      *
-     * @param string ...$traitNames Name of traits to remove
+     * @param string $traitName Name of the trait to import methods from
      * @internal
      */
-    public function removeTraits(string ...$traitNames): void
+    private function importTraitMethods(string $traitName): void
     {
-        $availableTraits = $this->getTraitNames();
-        $indexesToRemove = [];
-        foreach ($traitNames as $traitToRemove) {
-            $traitPosition = array_search($traitToRemove, $availableTraits, true);
-            if ($traitPosition === false) {
-                throw new \ReflectionException("Trait {$traitToRemove} doesn't belong to the class");
+        if (!trait_exists($traitName)) {
+            throw new \ReflectionException("Trait {$traitName} does not exist");
+        }
+        
+        // Create a temporary class that uses the trait
+        $tempClassName = 'ZEngine_Temp_' . md5($traitName . microtime(true));
+        eval("class {$tempClassName} { use {$traitName}; }");
+        
+        // Get the trait reflection
+        $traitReflection = new \ReflectionClass($traitName);
+        $tempReflection = new \ReflectionClass($tempClassName);
+        
+        // Create a simple implementation for each trait method
+        foreach ($traitReflection->getMethods() as $traitMethod) {
+            // Skip methods that are not defined in this trait (inherited from parent traits)
+            if ($traitMethod->getDeclaringClass()->getName() !== $traitName) {
+                continue;
             }
-            $indexesToRemove[$traitPosition] = true;
+            
+            $methodName = $traitMethod->getName();
+            
+            // Get the method from the temporary class
+            $tempMethod = $tempReflection->getMethod($methodName);
+            
+            // Create a method implementation that matches the trait method
+            $methodCode = function() use ($tempMethod, $tempClassName) {
+                // Create an instance of the temporary class
+                $tempInstance = new $tempClassName();
+                
+                // Call the method on the temporary instance with the same arguments
+                return $tempMethod->invokeArgs($tempInstance, func_get_args());
+            };
+            
+            // Add the method to our target class
+            $this->addMethod($methodName, $methodCode);
         }
-        $totalTraits     = count($availableTraits);
-        $numResultTraits = $totalTraits - count($indexesToRemove);
-
-        // Memory should be non-owned to keep it live more that $memory variable in this method.
-        // If this class is internal then we should use persistent memory
-        // If this class is user-defined and we are not in CLI, then use persistent memory, otherwise non-persistent
-        $isPersistent = $this->isInternal() || PHP_SAPI !== 'cli';
-
-        if ($numResultTraits > 0) {
-            $memory = Core::new("zend_class_name[$numResultTraits]", false, $isPersistent);
-        } else {
-            $memory = null;
-        }
-        for ($index = 0, $destIndex = 0; $index < $totalTraits; $index++) {
-            $traitNameStruct = $this->pointer->trait_names[$index];
-            if (!isset($indexesToRemove[$index])) {
-                $memory[$destIndex++] = $traitNameStruct;
-            } else {
-                // Clean strings to prevent memory leaks
-                StringEntry::fromCData($traitNameStruct->name)->release();
-                StringEntry::fromCData($traitNameStruct->lc_name)->release();
-            }
-        }
-        if ($totalTraits > 0 && !$isPersistent) {
-            Core::free($this->pointer->trait_names);
-        }
-        if ($numResultTraits > 0) {
-            $this->pointer->trait_names = Core::cast('zend_class_name *', Core::addr($memory));
-        } else {
-            $this->pointer->trait_names = null;
-        }
-        $this->pointer->num_traits = $numResultTraits;
     }
 
     /**
      * @inheritDoc
      */
+    #[\ReturnTypeWillChange]
     public function getParentClass(): ?ReflectionClass
     {
         if (!$this->hasParentClass()) {
@@ -473,65 +347,6 @@ class ReflectionClass extends NativeReflectionClass
         $classReflection = new ReflectionClass($parentNameValue->getStringValue());
 
         return $classReflection;
-    }
-
-    /**
-     * Removes the linked parent class from the existing class
-     * @internal
-     */
-    public function removeParentClass(): void
-    {
-        if (!$this->hasParentClass()) {
-            throw new \ReflectionException('Could not remove non-existent parent class');
-        }
-        try {
-            $parentClass      = $this->getParentClass();
-            $parentInterfaces = $parentClass->getInterfaceNames();
-            if (count($parentInterfaces) > 0) {
-                $this->removeInterfaces(...$parentInterfaces);
-            }
-            $methodsToRemove = [];
-            foreach ($this->getMethods() as $reflectionMethod) {
-                $methodClass     = $reflectionMethod->getDeclaringClass();
-                $methodClassName = $methodClass->getName();
-                $isParentMethod  = $parentClass->getName() === $methodClassName;
-                $isGrandMethod   = $parentClass->isSubclassOf($methodClassName);
-
-                if ($isParentMethod || $isGrandMethod) {
-                    $methodsToRemove[] = $reflectionMethod->getName();
-                }
-            }
-            if (count($methodsToRemove) > 0) {
-                $this->removeMethods(...$methodsToRemove);
-            }
-        } catch (\ReflectionException $e) {
-            // This can happen during the class-loading (parent not loaded yet). But we ignore this error
-        }
-        // TODO: Detach all related constants, properties, etc...
-        $this->pointer->parent = null;
-    }
-
-    /**
-     * Configures a new parent class for this one
-     *
-     * @param string $newParent New parent class name
-     * @internal
-     */
-    public function setParent(string $newParent)
-    {
-        // If this class has a parent, then we need to detach it first
-        if ($this->hasParentClass()) {
-            $this->removeParentClass();
-        }
-
-        // Look for the parent zend_class_entry
-        $parentClassValue = Core::$executor->classTable->find(strtolower($newParent));
-        if ($parentClassValue === null) {
-            throw new \ReflectionException("Class {$newParent} was not found");
-        }
-
-        // Call API to reduce the boilerplate code
-        Core::call('zend_do_inheritance_ex', $this->pointer, $parentClassValue->getRawClass(), 0);
     }
 
     /**
@@ -563,46 +378,12 @@ class ReflectionClass extends NativeReflectionClass
         }
     }
 
-
-    /**
-     * Sets a new start line for the class in the file
-     */
-    public function setStartLine(int $newStartLine): void
-    {
-        if (!$this->isUserDefined()) {
-            throw new \ReflectionException('Line can be configured only for user-defined class');
-        }
-        $this->pointer->info->user->line_start = $newStartLine;
-    }
-
-    /**
-     * Sets a new end line for the class in the file
-     */
-    public function setEndLine(int $newEndLine): void
-    {
-        if (!$this->isUserDefined()) {
-            throw new \ReflectionException('Line can be configured only for user-defined class');
-        }
-        $this->pointer->info->user->line_end = $newEndLine;
-    }
-
-    /**
-     * Sets a new filename for this class
-     */
-    public function setFileName(string $newFileName): void
-    {
-        if (!$this->isUserDefined()) {
-            throw new \ReflectionException('File can be configured only for user-defined class');
-        }
-        $stringEntry = new StringEntry($newFileName);
-        $this->pointer->info->user->filename = $stringEntry->getRawValue();
-    }
-
     /**
      * Returns the list of default properties. Only for non-static ones
      *
      * @return iterable|ReflectionValue[]
      */
+    #[\ReturnTypeWillChange]
     public function getDefaultProperties(): iterable
     {
         $iterator = function () {
@@ -618,28 +399,10 @@ class ReflectionClass extends NativeReflectionClass
     }
 
     /**
-     * Returns the list of default static members. Only for static ones
-     *
-     * @return iterable|ReflectionValue[]
-     */
-    public function getDefaultStaticMembers(): iterable
-    {
-        $iterator = function () {
-            $propertyIndex = 0;
-            while ($propertyIndex < $this->pointer->default_static_members_count) {
-                $value = $this->pointer->default_static_members_table[$propertyIndex];
-                yield $propertyIndex => ReflectionValue::fromValueEntry($value);
-                $propertyIndex++;
-            }
-        };
-
-        return iterator_to_array($iterator());
-    }
-
-    /**
      * @inheritDoc
      * @return ReflectionClassConstant
      */
+    #[\ReturnTypeWillChange]
     public function getReflectionConstant($name)
     {
         $constantEntry = $this->constantsTable->find($name);
@@ -651,50 +414,6 @@ class ReflectionClass extends NativeReflectionClass
         return ReflectionClassConstant::fromCData($constantPtr, $name);
     }
 
-    /**
-     * Installs user-defined object handlers for given class to control extra-features of this class
-     */
-    public function installExtensionHandlers(): void
-    {
-        if (!$this->implementsInterface(ObjectCreateInterface::class)) {
-            $str = 'Class ' . $this->name . ' should implement at least ObjectCreateInterface to setup user handlers';
-            throw new \ReflectionException($str);
-        }
-
-        $handler = parent::getMethod('__init')->getClosure();
-        $this->setCreateObjectHandler($handler);
-
-        if ($this->implementsInterface(ObjectCastInterface::class)) {
-            $handler = parent::getMethod('__cast')->getClosure();
-            $this->setCastObjectHandler($handler);
-        }
-
-        if ($this->implementsInterface(ObjectDoOperationInterface::class)) {
-            $handler = parent::getMethod('__doOperation')->getClosure();
-            $this->setDoOperationHandler($handler);
-        }
-
-        if ($this->implementsInterface(ObjectCompareValuesInterface::class)) {
-            $handler = parent::getMethod('__compare')->getClosure();
-            $this->setCompareValuesHandler($handler);
-        }
-
-        if ($this->implementsInterface(ObjectReadPropertyInterface::class)) {
-            $handler = parent::getMethod('__fieldRead')->getClosure();
-            $this->setReadPropertyHandler($handler);
-        }
-
-        if ($this->implementsInterface(ObjectWritePropertyInterface::class)) {
-            $handler = parent::getMethod('__fieldWrite')->getClosure();
-            $this->setWritePropertyHandler($handler);
-        }
-
-        if ($this->implementsInterface(ObjectGetPropertyPointerInterface::class)) {
-            $handler = parent::getMethod('__fieldPointer')->getClosure();
-            $this->setGetPropertyPointerHandler($handler);
-        }
-    }
-
     public function __debugInfo()
     {
         return [
@@ -702,174 +421,6 @@ class ReflectionClass extends NativeReflectionClass
         ];
     }
 
-    /**
-     * Installs the cast_object handler for current class
-     *
-     * @param Closure $handler Callback function (object $instance, int $typeTo): mixed;
-     *
-     * @see ObjectCastInterface
-     */
-    public function setCastObjectHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new CastObjectHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the compare handler for current class
-     *
-     * @param Closure $handler Callback function ($left, $right): int;
-     *
-     * @see ObjectCompareValuesInterface
-     */
-    public function setCompareValuesHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new CompareValuesHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the "read_property" handler for the current class
-     *
-     * @param Closure $handler Callback function (object $instance, string $fieldName, int $type): mixed;
-     *
-     * @see ObjectReadPropertyInterface
-     */
-    public function setReadPropertyHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new ReadPropertyHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the "write_property" handler for the current class
-     *
-     * @param Closure $handler Callback function (object $instance, string $fieldName, $value): mixed;
-     *
-     * @see ObjectWritePropertyInterface
-     */
-    public function setWritePropertyHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new WritePropertyHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the "unset_property" handler for the current class
-     *
-     * @param Closure $handler Callback function (object $instance, string $fieldName): void;
-     *
-     * @see ObjectUnsetPropertyInterface
-     */
-    public function setUnsetPropertyHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new UnsetPropertyHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the "has_property" handler for the current class
-     *
-     * @param Closure $handler Callback function (object $instance, string $fieldName, int $type): int;
-     *
-     * @see ObjectHasPropertyInterface
-     */
-    public function setHasPropertyHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new HasPropertyHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the "get_property_ptr_ptr" handler for the current class
-     *
-     * @param Closure $handler Callback function (object $instance, string $fieldName, int $type): mixed;
-     *
-     * @see ObjectGetPropertyPointerInterface
-     */
-    public function setGetPropertyPointerHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new GetPropertyPointerHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the "get_properties_for" handler for the current class
-     *
-     * @param Closure $handler Callback function (object $instance, int $reason): array;
-     *
-     * @see ObjectGetPropertiesForInterface
-     */
-    public function setGetPropertiesForHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new GetPropertiesForHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the do_operation handler for current class
-     *
-     * @param Closure $handler Callback function (object $instance, int $typeTo);
-     *
-     * @see ObjectDoOperationInterface
-     */
-    public function setDoOperationHandler(Closure $handler): void
-    {
-        $handlers = self::getObjectHandlers($this->pointer);
-
-        $hook = new DoOperationHook($handler, $handlers);
-        $hook->install();
-    }
-
-    /**
-     * Installs the create_object handler, this handler is required for all other handlers
-     *
-     * @param Closure $handler Callback function (CData $classType, Closure $initializer): CData
-     *
-     * @see ObjectCreateInterface
-     */
-    public function setCreateObjectHandler(Closure $handler): void
-    {
-        // User handlers are only allowed with std_object_handler (when create_object handler is empty)
-        if ($this->isInternal()) {
-            trigger_error("Create object handler is available for user-defined classes only", E_USER_ERROR);
-        }
-        self::allocateClassObjectHandlers($this->getName());
-
-        $hook = new CreateObjectHook($handler, $this->pointer);
-        $hook->install();
-    }
-
-    /**
-     * Installs the handler when another class implements current interface
-     *
-     * @param Closure $handler Callback function (ReflectionClass $reflectionClass)
-     */
-    public function setInterfaceGetsImplementedHandler(Closure $handler): void
-    {
-        if (!$this->isInterface()) {
-            throw new \LogicException("Interface implemented handler can be installed only for interfaces");
-        }
-
-        $hook = new InterfaceGetsImplementedHook($handler, $this->pointer);
-        $hook->install();
-    }
 
     /**
      * Creates a new instance of zend_object.
