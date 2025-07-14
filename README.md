@@ -20,7 +20,7 @@ This package allows you to:
 ## Installation
 
 ```bash
-composer require grikdotnet/z-unfinal
+composer require --dev grikdotnet/z-unfinal
 ```
 
 ## Examples:
