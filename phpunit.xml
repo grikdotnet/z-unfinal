@@ -10,18 +10,14 @@
   -->
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:noNamespaceSchemaLocation="./vendor/phpunit/phpunit/phpunit.xsd"
+         displayDetailsOnTestsThatTriggerDeprecations="true"
          colors="true"
          bootstrap="./tests/bootstrap.php">
-    <coverage>
+    <source>
         <include>
             <directory>./src/</directory>
         </include>
-        <report>
-            <clover outputFile="./build/logs/clover.xml"/>
-            <crap4j outputFile="./build/logs/crap4j.xml"/>
-            <xml outputDirectory="./build/coverage/xml"/>
-        </report>
-    </coverage>
+    </source>
     <testsuites>
         <testsuite name="Z-Engine Test Suite">
             <directory>./tests/</directory>
